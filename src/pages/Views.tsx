@@ -4,7 +4,7 @@ import { useForm, useFieldArray, SubmitHandler } from 'react-hook-form';
 import { Link } from 'react-router-dom';
 import {
   Utensils, Tag, TrendingUp, AlertCircle, ShoppingCart, Plus, Trash2,
-  CheckCircle2, DollarSign, PieChart, Percent, LayoutDashboard, BrainCircuit, Wallet, Calendar, ArrowRight, Save
+  CheckCircle2, DollarSign, PieChart, Percent, LayoutDashboard, BrainCircuit, Wallet, Calendar, ArrowRight, Save, Carrot, ChefHat
 } from 'lucide-react';
 import {
   BarChart,
@@ -42,7 +42,7 @@ type DishInputs = {
 };
 
 export function Ingredients() {
-  const { ingredients, addIngredient, deleteIngredient } = useStore();
+  const { ingredients, saveIngredient, deleteIngredientFirestore } = useStore();
   const { register, handleSubmit, watch, reset, formState: { errors } } = useForm<Inputs>({
     defaultValues: {
       name: '',
@@ -53,14 +53,19 @@ export function Ingredients() {
     }
   });
 
-  const onSubmit: SubmitHandler<Inputs> = (data) => {
-    addIngredient({
-      name: data.name,
-      grossWeight: Number(data.grossWeight),
-      netWeight: Number(data.netWeight),
-      purchasePrice: Number(data.purchasePrice),
-    });
-    reset();
+  const onSubmit: SubmitHandler<Inputs> = async (data) => {
+    try {
+      await saveIngredient({
+        name: data.name,
+        grossWeight: Number(data.grossWeight),
+        netWeight: Number(data.netWeight),
+        purchasePrice: Number(data.purchasePrice),
+        unit: data.unit
+      });
+      reset();
+    } catch (err) {
+      console.error("Error saving ingredient:", err);
+    }
   };
 
   // Observamos los valores para calcular la merma en tiempo real
@@ -279,7 +284,7 @@ export function Ingredients() {
                           </td>
                           <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                             <button
-                              onClick={() => deleteIngredient(ingredient.id)}
+                              onClick={() => deleteIngredientFirestore(ingredient.id)}
                               className="text-slate-400 hover:text-red-600 transition-colors p-1.5 rounded-md hover:bg-red-50"
                               title="Eliminar insumo"
                             >
@@ -314,15 +319,29 @@ export function Dashboard() {
 
   const activeEvent = useMemo(() => events.find(e => e.id === activeEventId), [events, activeEventId]);
 
-  // Encontrar el costo promedio ponderado si hubiera platos (marcamos 0 si no hay)
+  // Margen objetivo por defecto (30%) si no existe configuración global
+  const targetMargin = globalConfig?.targetMarginPercentage ?? 30;
+
+  // --- LÓGICA DE CÁLCULO PARA DAILY MENUS ---
   const weightedAverageCost = useMemo(() => {
-    if (!activeEvent || activeEvent.items.length === 0) return 0;
+    if (!activeEvent || activeEvent.dailyMenus.length === 0) return 0;
     
-    return activeEvent.items.reduce((acc, item) => {
-      const dish = dishes.find(d => d.id === item.dishId);
-      if (!dish) return acc;
-      return acc + (dish.totalCost * (item.expectedSalesPercentage / 100));
-    }, 0);
+    // Obtenemos todos los items de todos los días
+    const allItems = activeEvent.dailyMenus.flatMap(day => day.items);
+    if (allItems.length === 0) return 0;
+
+    // El WAC semanal es el promedio de los costos diarios ponderados
+    const dailyWacs = activeEvent.dailyMenus.map(day => {
+      if (day.items.length === 0) return 0;
+      return day.items.reduce((acc, item) => {
+        const dish = dishes.find(d => d.id === item.dishId);
+        if (!dish) return acc;
+        return acc + (dish.totalCost * (item.expectedSalesPercentage / 100));
+      }, 0);
+    }).filter(wac => wac > 0);
+
+    if (dailyWacs.length === 0) return 0;
+    return dailyWacs.reduce((a, b) => a + b, 0) / dailyWacs.length;
   }, [activeEvent, dishes]);
 
   const currentMarginAmount = activeEvent && activeEvent.fixedSellingPrice > 0
@@ -334,145 +353,228 @@ export function Dashboard() {
     : 0;
 
   // Break-even (Punto de Equilibrio en Unidades)
-  // ¿Cuántos platos necesito vender para pagar los Costos Fijos?
   const breakEvenDishes = currentMarginAmount > 0 ? Math.ceil(totalFixedCosts / currentMarginAmount) : 0;
 
-  // Preparar datos para el gráfico de "Top 5 Insumos más costosos"
+  // Preparar datos para el gráfico de "Top 5 Insumos"
   const topExpensiveIngredients = useMemo(() => {
     return [...ingredients]
       .sort((a, b) => b.realCostPerGram - a.realCostPerGram)
       .slice(0, 5)
       .map(item => ({
         name: item.name,
-        // Mostramos el costo por Kilo para que sea legible en el gráfico
         costPerKilo: Number((item.realCostPerGram * 1000).toFixed(2)) 
       }));
   }, [ingredients]);
 
   const COLORS = ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe', '#dbeafe'];
 
+  // --- UI DE ESTADO VACÍO (BIENVENIDA) ---
+  if (events.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[80vh] text-center max-w-5xl mx-auto p-6">
+        <div className="p-6 bg-indigo-50 rounded-full mb-8 relative">
+           <LayoutDashboard className="w-14 h-14 text-indigo-600" />
+           <div className="absolute -top-1 -right-1 w-6 h-6 bg-emerald-500 rounded-full border-4 border-white animate-pulse" />
+        </div>
+        <h1 className="text-4xl font-extrabold text-slate-900 mb-4 tracking-tight">¡Bienvenido a ViandasPro!</h1>
+        <p className="text-slate-500 text-lg mb-12 leading-relaxed font-medium max-w-2xl">
+          Para que el Dashboard cobre vida y puedas ver tu rentabilidad, sigue estos tres pasos fundamentales para configurar tu negocio.
+        </p>
+
+        <div className="relative grid grid-cols-1 md:grid-cols-3 gap-8 w-full">
+          {/* Líneas conectoras para Desktop */}
+          <div className="hidden md:block absolute top-1/2 left-[30%] right-[30%] h-0.5 bg-slate-100 -translate-y-1/2 z-0">
+             <div className="flex justify-between w-full h-full relative">
+                <div className="absolute left-0 -top-1.5"><ArrowRight className="w-4 h-4 text-slate-200" /></div>
+                <div className="absolute right-0 -top-1.5"><ArrowRight className="w-4 h-4 text-slate-200" /></div>
+             </div>
+          </div>
+
+          <Link 
+            to="/ingredients" 
+            className="relative z-10 flex flex-col items-center gap-4 p-8 bg-white border-2 border-slate-100 rounded-3xl hover:border-indigo-500 hover:shadow-2xl transition-all group"
+          >
+            <div className="p-4 bg-indigo-50 rounded-2xl group-hover:bg-indigo-600 group-hover:text-white transition-all transform group-hover:scale-110 shadow-sm">
+              <Carrot className="w-8 h-8 text-indigo-600 group-hover:text-white" />
+            </div>
+            <div className="text-center">
+              <p className="font-black text-xl text-slate-900">1. Cargar Insumos</p>
+              <p className="text-sm text-slate-400 mt-2 font-medium">Define los costos reales de tus materias primas.</p>
+            </div>
+            <div className="mt-2 text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity font-bold text-sm flex items-center gap-1">
+              Ir a Insumos <ArrowRight className="w-4 h-4" />
+            </div>
+          </Link>
+
+          <Link 
+            to="/dishes" 
+            className="relative z-10 flex flex-col items-center gap-4 p-8 bg-white border-2 border-slate-100 rounded-3xl hover:border-blue-500 hover:shadow-2xl transition-all group"
+          >
+            <div className="p-4 bg-blue-50 rounded-2xl group-hover:bg-blue-600 group-hover:text-white transition-all transform group-hover:scale-110 shadow-sm">
+              <Utensils className="w-8 h-8 text-blue-600 group-hover:text-white" />
+            </div>
+            <div className="text-center">
+              <p className="font-black text-xl text-slate-900">2. Crear Platos</p>
+              <p className="text-sm text-slate-400 mt-2 font-medium">Arma tus recetas vinculando los insumos.</p>
+            </div>
+            <div className="mt-2 text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity font-bold text-sm flex items-center gap-1">
+              Ver Catálogo <ArrowRight className="w-4 h-4" />
+            </div>
+          </Link>
+
+          <Link 
+            to="/events" 
+            className="relative z-10 flex flex-col items-center gap-4 p-8 bg-white border-2 border-slate-100 rounded-3xl hover:border-emerald-500 hover:shadow-2xl transition-all group"
+          >
+            <div className="p-4 bg-emerald-50 rounded-2xl group-hover:bg-emerald-600 group-hover:text-white transition-all transform group-hover:scale-110 shadow-sm">
+              <Calendar className="w-8 h-8 text-emerald-600 group-hover:text-white" />
+            </div>
+            <div className="text-center">
+              <p className="font-black text-xl text-slate-900">3. Generar Evento</p>
+              <p className="text-sm text-slate-400 mt-2 font-medium">Configura tu calendario y lanza la simulación.</p>
+            </div>
+            <div className="mt-2 text-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity font-bold text-sm flex items-center gap-1">
+              Crear Menú <ArrowRight className="w-4 h-4" />
+            </div>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Obtenemos todos los platos distintos del evento activo para el gráfico de barras
+  const uniqueDishData = useMemo(() => {
+    if (!activeEvent) return [];
+    const allItems = activeEvent.dailyMenus.flatMap(day => day.items);
+    const dishIds = Array.from(new Set(allItems.map(i => i.dishId)));
+    
+    return dishIds.map(id => {
+      const d = dishes.find(dish => dish.id === id);
+      return {
+        name: d?.name || '?',
+        profit: activeEvent.fixedSellingPrice - (d?.totalCost || 0)
+      };
+    });
+  }, [activeEvent, dishes]);
+
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
+    <div className="space-y-10 max-w-7xl mx-auto pb-12">
       {/* Header */}
       <div className="sm:flex sm:items-center sm:justify-between px-4 sm:px-0">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Dashboard General</h1>
-          <p className="mt-2 text-sm text-slate-500">
-            Resumen de rentabilidad, métricas clave y análisis de costos.
+          <h1 className="text-3xl font-black tracking-tight text-slate-900 flex items-center gap-3">
+             <LayoutDashboard className="w-8 h-8 text-indigo-600" />
+             Dashboard de Rentabilidad
+          </h1>
+          <p className="mt-2 text-sm text-slate-500 font-medium">
+            Resumen de salud financiera basado en el Evento Activo: <span className="text-indigo-600 font-bold">{activeEvent?.name ?? 'Sin Seleccionar'}</span>
           </p>
         </div>
       </div>
 
       {/* KPI Cards */}
       <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="bg-white overflow-hidden rounded-xl shadow-sm ring-1 ring-slate-200 p-6 flex items-center gap-4 transition-transform hover:-translate-y-1 hover:shadow-md border-l-4 border-indigo-500">
-          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
+        {/* WAC Card */}
+        <div className="bg-white overflow-hidden rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 flex items-center gap-5 transition-all hover:shadow-md border-l-4 border-indigo-500">
+          <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
              <TrendingUp className="w-8 h-8" />
           </div>
           <div>
-            <dt className="text-sm font-medium text-slate-500 truncate">Costo Ponderado</dt>
+            <dt className="text-xs font-bold text-slate-400 uppercase tracking-widest">Costo Ponderado</dt>
             <dd className="mt-1 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-indigo-600">
+              <span className="text-3xl font-black tracking-tight text-slate-900">
                 ${weightedAverageCost.toFixed(2)}
               </span>
             </dd>
-            <p className="text-[10px] text-slate-400 mt-1 leading-tight">Costo medio actual</p>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden rounded-xl shadow-sm ring-1 ring-slate-200 p-6 flex flex-col justify-center transition-transform hover:-translate-y-1 hover:shadow-md">
-          <dt className="text-sm font-medium text-slate-500 truncate flex justify-between items-center">
-             Margen Real vs Objetivo ({activeEvent ? activeEvent.name : 'N/A'})
+        {/* Margin Card */}
+        <div className="bg-white overflow-hidden rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 flex flex-col justify-center transition-all hover:shadow-md border-l-4 border-emerald-500">
+          <dt className="text-xs font-bold text-slate-400 uppercase tracking-widest flex justify-between items-center">
+             Margen Real vs Objetivo
           </dt>
           <dd className="mt-2 flex items-baseline gap-2">
-             <span className={`text-3xl font-bold tracking-tight ${currentMarginPercentage >= globalConfig.targetMarginPercentage ? 'text-emerald-600' : 'text-red-500'}`}>
+             <span className={`text-4xl font-black tracking-tight ${currentMarginPercentage >= targetMargin ? 'text-emerald-600' : 'text-red-500'}`}>
                 {currentMarginPercentage.toFixed(1)}%
              </span>
-             <span className="text-sm text-slate-500">
-                / {globalConfig.targetMarginPercentage}%
+             <span className="text-sm text-slate-400 font-bold">
+                / {targetMargin}%
              </span>
           </dd>
           {/* Barra de progreso */}
-          <div className="w-full bg-slate-100 rounded-full h-1.5 mt-3 overflow-hidden">
+          <div className="w-full bg-slate-100 rounded-full h-2 mt-4 overflow-hidden shadow-inner">
              <div 
-               className={`h-1.5 rounded-full ${currentMarginPercentage >= globalConfig.targetMarginPercentage ? 'bg-emerald-500' : 'bg-red-500'}`} 
+               className={`h-full rounded-full transition-all duration-1000 ${currentMarginPercentage >= targetMargin ? 'bg-emerald-500' : 'bg-red-500'}`} 
                style={{ width: `${Math.min(currentMarginPercentage, 100)}%` }}
              />
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden rounded-xl shadow-sm ring-1 ring-slate-200 p-6 flex items-center gap-4 transition-transform hover:-translate-y-1 hover:shadow-md border-l-4 border-amber-500">
-          <div className="p-3 bg-amber-50 text-amber-600 rounded-lg">
+        {/* BEP Card */}
+        <div className="bg-white overflow-hidden rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 flex items-center gap-5 transition-all hover:shadow-md border-l-4 border-amber-500">
+          <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
              <Wallet className="w-8 h-8" />
           </div>
           <div>
-            <dt className="text-sm font-medium text-slate-500 truncate">Punto de Equilibrio</dt>
+            <dt className="text-xs font-bold text-slate-400 uppercase tracking-widest">Breakeven</dt>
             <dd className="mt-1 flex items-baseline gap-2">
-              <span className="text-2xl font-bold tracking-tight text-amber-600">
+              <span className="text-3xl font-black tracking-tight text-slate-900">
                 {breakEvenDishes}
               </span>
+              <span className="text-xs text-slate-400 font-bold">Unids</span>
             </dd>
-            <p className="text-[10px] text-slate-400 mt-1 leading-tight">Platos al mes para pagar Costos Fijos</p>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden rounded-xl shadow-sm ring-1 ring-slate-200 p-6 flex flex-col justify-center transition-transform hover:-translate-y-1 hover:shadow-md">
-            <dt className="text-sm font-medium text-slate-500 truncate">Métricas Rápidas</dt>
-            <dd className="mt-2 space-y-1">
-               <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-500">Viandas Creadas:</span>
-                  <span className="font-semibold text-slate-900">{totalDishes}</span>
+        {/* Metrics Card */}
+        <div className="bg-white overflow-hidden rounded-2xl shadow-sm ring-1 ring-slate-200 p-6 flex flex-col justify-center transition-all hover:shadow-md bg-slate-50 border border-slate-200">
+            <dt className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Resumen del Inventario</dt>
+            <dd className="space-y-2">
+               <div className="flex justify-between items-center text-sm font-bold">
+                  <span className="text-slate-500">Viandas:</span>
+                  <span className="text-indigo-600">{totalDishes}</span>
                </div>
-               <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-500">Insumos Reg.:</span>
-                  <span className="font-semibold text-slate-900">{totalIngredients}</span>
-               </div>
-               <div className="flex justify-between items-center text-sm">
-                  <span className="text-slate-500">Gastos Fijos/Mes:</span>
-                  <span className="font-semibold text-slate-900">${totalFixedCosts.toFixed(0)}</span>
+               <div className="flex justify-between items-center text-sm font-bold">
+                  <span className="text-slate-500">Gastos Fijos:</span>
+                  <span className="text-slate-900">${totalFixedCosts.toFixed(0)}</span>
                </div>
             </dd>
         </div>
       </dl>
 
       {/* Charts Section */}
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 pt-4">
         
         {/* Gráfico 1: Top 5 Insumos */}
-        <div className="bg-white shadow-sm ring-1 ring-slate-200 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4">
+        <div className="bg-white shadow-xl ring-1 ring-slate-200 rounded-2xl p-8 border border-slate-100">
+          <div className="flex items-center justify-between mb-8">
             <div>
-              <h3 className="text-base font-semibold leading-6 text-slate-900">
-                Top 5 Insumos Más Costosos
-              </h3>
-              <p className="text-sm text-slate-500 mt-1">
-                Análisis de costo real (por kg/lt) descontando mermas.
-              </p>
+              <h3 className="text-lg font-black text-slate-900">Analizador de Costos Críticos</h3>
+              <p className="text-sm text-slate-500 font-medium mt-1">Top 5 insumos con mayor impacto por kg/lt.</p>
             </div>
-            <Tag className="w-5 h-5 text-slate-400" />
+            <div className="p-2 bg-slate-50 rounded-lg">
+               <Tag className="w-5 h-5 text-slate-400" />
+            </div>
           </div>
 
-          <div className="h-72 w-full mt-4">
+          <div className="h-72 w-full">
             {topExpensiveIngredients.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topExpensiveIngredients} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                <BarChart data={topExpensiveIngredients} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} />
                   <YAxis 
                     axisLine={false} 
                     tickLine={false} 
-                    tick={{fill: '#64748b', fontSize: 12}}
+                    tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}}
                     tickFormatter={(value) => `$${value}`}
                   />
                   <Tooltip 
                     cursor={{fill: '#f8fafc'}}
-                    contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                    formatter={(value: any) => {
-                      const numValue = typeof value === 'number' ? value : Number(value) || 0;
-                      return [`$${numValue.toFixed(2)}`, 'Costo por Kg/L'];
-                    }}
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
                   />
-                  <Bar dataKey="costPerKilo" radius={[4, 4, 0, 0]}>
+                  <Bar dataKey="costPerKilo" radius={[6, 6, 0, 0]} barSize={40}>
                     {topExpensiveIngredients.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
@@ -480,74 +582,53 @@ export function Dashboard() {
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-               <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                  <AlertCircle className="w-8 h-8 mb-2 text-slate-300" />
-                  <p className="text-sm">Registra insumos para visualizar este gráfico</p>
+               <div className="h-full flex flex-col items-center justify-center text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                  <AlertCircle className="w-8 h-8 mb-3 text-slate-300" />
+                  <p className="text-sm font-bold">No hay insumos suficientes</p>
                </div>
             )}
           </div>
         </div>
 
-        {/* Gráfico 2: CrossSubsidyChart (Rentabilidad por Plato) */}
-        <div className="bg-white shadow-sm ring-1 ring-slate-200 rounded-xl p-6 flex flex-col">
-          <div className="flex items-center justify-between mb-6 border-b border-slate-100 pb-4">
+        {/* Gráfico 2: Net Profit per Dish */}
+        <div className="bg-white shadow-xl ring-1 ring-slate-200 rounded-2xl p-8 border border-slate-100 flex flex-col">
+          <div className="flex items-center justify-between mb-8">
             <div>
-              <h3 className="text-base font-semibold leading-6 text-slate-900">
-                Ganancia Neta por Vianda ($) en Evento Activo
-              </h3>
-              <p className="text-sm text-slate-500 mt-1">
-                Visualización de la estrategia de Compensación de Márgenes.
-              </p>
+              <h3 className="text-lg font-black text-slate-900">Estrategia de Compensación</h3>
+              <p className="text-sm text-slate-500 font-medium mt-1">Ganancia neta por plato ($) en el evento actual.</p>
             </div>
-            <TrendingUp className="w-5 h-5 text-indigo-400" />
+            <div className="p-2 bg-indigo-50 rounded-lg">
+               <BrainCircuit className="w-5 h-5 text-indigo-600" />
+            </div>
           </div>
           
-          <div className="h-72 w-full mt-4">
-             {activeEvent && activeEvent.items.length > 0 ? (
+          <div className="flex-1 h-72 w-full">
+             {uniqueDishData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={activeEvent.items.map(item => { 
-                      const d = dishes.find(dish => dish.id === item.dishId);
-                      return {
-                        name: d?.name || '?', 
-                        profit: activeEvent.fixedSellingPrice - (d?.totalCost || 0) 
-                      };
-                    })} 
-                    margin={{ top: 20, right: 30, left: 0, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 11}} />
+                  <BarChart data={uniqueDishData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }} >
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}} />
                     <YAxis 
                       axisLine={false} 
                       tickLine={false} 
-                      tick={{fill: '#64748b', fontSize: 12}}
+                      tick={{fill: '#94a3b8', fontSize: 11, fontWeight: 700}}
                       tickFormatter={(value: any) => `$${value}`}
                     />
-                    <Tooltip 
-                      cursor={{fill: '#f8fafc'}}
-                      contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                      formatter={(value: any) => {
-                        const numValue = typeof value === 'number' ? value : Number(value) || 0;
-                        return [`$${numValue.toFixed(2)}`, 'Ganancia Unitaria ($)'];
-                      }}
-                    />
-                    <ReferenceLine y={0} stroke="#cbd5e1" />
-                    <Bar dataKey="profit" radius={[4, 4, 0, 0]}>
-                      {activeEvent.items.map((item, index) => {
-                         const d = dishes.find(dish => dish.id === item.dishId);
-                         const profit = activeEvent.fixedSellingPrice - (d?.totalCost || 0);
-                         return <Cell key={`cell-${index}`} fill={profit >= 0 ? '#10b981' : '#f43f5e'} />
-                      })}
+                    <Tooltip cursor={{fill: '#f8fafc'}} />
+                    <ReferenceLine y={0} stroke="#cbd5e1" strokeWidth={2} />
+                    <Bar dataKey="profit" radius={[6, 6, 0, 0]} barSize={40}>
+                      {uniqueDishData.map((item, index) => (
+                         <Cell key={`cell-${index}`} fill={item.profit >= 0 ? '#10b981' : '#f43f5e'} />
+                      ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 rounded-lg border border-dashed border-slate-300 p-8 text-center text-slate-500 mt-4 h-full">
-                   <div className="p-4 bg-white rounded-full shadow-sm mb-4">
-                     <PieChart className="w-8 h-8 text-indigo-400" />
-                   </div>
-                   <p className="font-medium text-slate-700">Esperando datos de viandas...</p>
-                   <p className="text-sm mt-2 max-w-xs text-center">
-                     Aquí renderizaremos el gráfico de Rentabilidad cuando crees tu catálogo de platos y fijes un precio de venta.
+                <div className="flex-1 flex flex-col items-center justify-center bg-slate-50 rounded-xl border border-dashed border-slate-200 p-8 text-center h-full">
+                   <PieChart className="w-10 h-10 text-slate-300 mb-4" />
+                   <p className="font-bold text-slate-500">Simulación Inactiva</p>
+                   <p className="text-[11px] mt-2 max-w-xs text-slate-400 font-medium">
+                     Agrega platos a tu evento activo para ver la matriz de rentabilidad unitaria.
                    </p>
                 </div>
              )}
@@ -560,7 +641,7 @@ export function Dashboard() {
 }
 
 export function Dishes() {
-  const { ingredients, dishes, addDish, deleteDish } = useStore();
+  const { ingredients, dishes, saveDish, deleteDishFirestore } = useStore();
   const [successMsg, setSuccessMsg] = useState('');
 
   const { register, control, handleSubmit, watch, reset, formState: { errors } } = useForm<DishInputs>({
@@ -605,7 +686,7 @@ export function Dishes() {
     return baseCost + factorQCost;
   }, [watchRecipeItems, watchFactorQ, ingredients]);
 
-  const onSubmit: SubmitHandler<DishInputs> = (data) => {
+  const onSubmit: SubmitHandler<DishInputs> = async (data) => {
     // Validar que no envien items vacios
     const validIngredients = data.recipeIngredients.filter(i => i.ingredientId !== '');
     
@@ -614,21 +695,25 @@ export function Dishes() {
       return;
     }
 
-    addDish({
-      name: data.name,
-      factorQ: {
-        fixedAmount: Number(data.factorQ.fixedAmount),
-        percentage: Number(data.factorQ.percentage),
-      },
-      ingredients: validIngredients.map(item => ({
-        ingredientId: item.ingredientId,
-        gramsUsed: Number(item.gramsUsed)
-      }))
-    });
+    try {
+      await saveDish({
+        name: data.name,
+        factorQ: {
+          fixedAmount: Number(data.factorQ.fixedAmount),
+          percentage: Number(data.factorQ.percentage),
+        },
+        ingredients: validIngredients.map(item => ({
+          ingredientId: item.ingredientId,
+          gramsUsed: Number(item.gramsUsed)
+        }))
+      });
 
-    setSuccessMsg(`¡Vianda "${data.name}" añadida éxito!`);
-    setTimeout(() => setSuccessMsg(''), 3000);
-    reset();
+      setSuccessMsg(`¡Vianda "${data.name}" añadida éxito!`);
+      setTimeout(() => setSuccessMsg(''), 3000);
+      reset();
+    } catch (err) {
+      console.error("Error saving dish:", err);
+    }
   };
 
   return (
@@ -872,7 +957,7 @@ export function Dishes() {
                       </div>
 
                       <button
-                        onClick={() => deleteDish(dish.id)}
+                        onClick={() => deleteDishFirestore(dish.id)}
                         className="absolute top-4 pb-2 left-1/2 -ml-3 -mt-6 sm:mt-0 sm:top-5 sm:right-5 sm:left-auto opacity-0 group-hover:opacity-100 transition-opacity p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100"
                         title="Eliminar plato"
                       >
@@ -904,19 +989,32 @@ export function MenuEngineering() {
   const activeEvent = useMemo(() => events.find(e => e.id === activeEventId), [events, activeEventId]);
 
   const matrixData = useMemo(() => {
-    if (!activeEvent || activeEvent.items.length === 0) return { data: [], avgProfit: 0, avgPop: 0 };
+    if (!activeEvent || activeEvent.dailyMenus.length === 0) return { data: [], avgProfit: 0, avgPop: 0 };
+
+    const allItems = activeEvent.dailyMenus.flatMap(day => day.items);
+    if (allItems.length === 0) return { data: [], avgProfit: 0, avgPop: 0 };
+
+    // Agrupar por plato para calcular popularidad promedio
+    const dishAggregates: Record<string, { totalPop: number, count: number }> = {};
+    allItems.forEach(item => {
+      if (!dishAggregates[item.dishId]) {
+        dishAggregates[item.dishId] = { totalPop: 0, count: 0 };
+      }
+      dishAggregates[item.dishId].totalPop += item.expectedSalesPercentage;
+      dishAggregates[item.dishId].count += 1;
+    });
 
     let totalProfit = 0;
     let totalPop = 0;
 
-    const mappedDishes = activeEvent.items.map(item => {
-      const dish = dishes.find(d => d.id === item.dishId);
+    const mappedDishes = Object.entries(dishAggregates).map(([dishId, agg]) => {
+      const dish = dishes.find(d => d.id === dishId);
       if (!dish) return null;
 
-      // Profitability: Selling Price of Event - Dish Cost
       const profit = activeEvent.fixedSellingPrice - dish.totalCost;
-      // Popularity: Expected Sales % in this Event
-      const pop = item.expectedSalesPercentage;
+      // Popularidad: Promedio de su mix en los días que aparece (ponderado por la cantidad de días del ciclo)
+      // Para la matriz BCG usaremos el "Sales Mix" simplificado como el promedio de su % Diario
+      const pop = agg.totalPop / (activeEvent.dailyMenus.length || 1);
 
       totalProfit += profit;
       totalPop += pop;
@@ -926,7 +1024,7 @@ export function MenuEngineering() {
         name: dish.name,
         profitability: profit,
         popularity: pop,
-        category: '' // Calculated below
+        category: '' // Calculado abajo
       };
     }).filter(Boolean) as any[];
 
@@ -935,7 +1033,7 @@ export function MenuEngineering() {
     const avgProfit = totalProfit / mappedDishes.length;
     const avgPop = totalPop / mappedDishes.length;
 
-    // Categorize using BCG Matrix Logic
+    // Categorizar usando lógica de Matriz BCG
     const categorizedData = mappedDishes.map(d => {
       let cat = '';
       if (d.popularity >= avgPop && d.profitability >= avgProfit) cat = 'Estrella';

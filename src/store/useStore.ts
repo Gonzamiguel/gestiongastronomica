@@ -1,21 +1,35 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { db } from '../firebase';
+import { useAuthStore } from './useAuthStore';
+import { 
+  collection, 
+  getDocs, 
+  doc, 
+  setDoc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  query, 
+  where,
+  orderBy 
+} from 'firebase/firestore';
 
-// --- Interfaces para el Modelo de Datos ---
+// --- Interfaces para el Modelo de Datos (Multi-Tenant) ---
 
 export interface Ingredient {
   id: string;
+  companyId: string; // SaaS
   name: string;
-  grossWeight: number; // Peso bruto de compra
-  netWeight: number; // Peso neto tras mermas
-  purchasePrice: number; // Precio de compra
-  realCostPerGram: number; // Costo por gramaje utilizable (calculado)
+  unit: string;
+  grossWeight: number;
+  netWeight: number;
+  purchasePrice: number;
+  realCostPerGram: number;
 }
 
-// Configuración del Factor Q (Costos Ocultos)
 export interface FactorQConfig {
-  fixedAmount: number; // Valor monetario fijo (ej: Envase)
-  percentage: number; // Porcentaje sobre el costo de ingredientes (ej: Mermas invisibles, condimentos)
+  fixedAmount: number;
+  percentage: number;
 }
 
 export interface RecipeIngredient {
@@ -25,15 +39,24 @@ export interface RecipeIngredient {
 
 export interface Dish {
   id: string;
+  companyId: string; // SaaS
   name: string;
   ingredients: RecipeIngredient[];
   factorQ: FactorQConfig;
-  totalCost: number; // Costo total (Ingredientes + Factor Q)
+  totalCost: number;
 }
 
 export interface MenuEventItem {
+  id: string;
   dishId: string;
   expectedSalesPercentage: number;
+}
+
+export interface DailyMenu {
+  id: string;
+  date: string;
+  dayName: string;
+  items: MenuEventItem[];
 }
 
 export interface EventCustomCost {
@@ -44,22 +67,64 @@ export interface EventCustomCost {
 
 export interface MenuEvent {
   id: string;
+  companyId: string; // SaaS
   name: string;
   createdAt: number;
+  startDate: string;
+  endDate: string;
   fixedSellingPrice: number;
   isActive: boolean;
-  items: MenuEventItem[];
+  dailyMenus: DailyMenu[];
   useGlobalFixedCosts: boolean;
   customCosts: EventCustomCost[];
   guestCount?: number;
 }
 
+export interface CompanyProfile {
+  companyId: string;
+  companyName: string;
+  whatsappNumber: string;
+  email: string;
+  isActive: boolean;
+}
+
+export interface GuestCustomer {
+  name: string;
+  lastName: string;
+  phone: string;
+  email: string;
+  notes?: string;
+}
+
+export interface OrderItem {
+  id: string;
+  dishId: string;
+  dishName: string;
+  quantity: number;
+  priceAtOrder: number;
+  dayName: string;
+  date: string;
+}
+
+export interface Order {
+  id: string;
+  eventId: string;
+  companyId: string;
+  customer: GuestCustomer;
+  items: OrderItem[];
+  totalAmount: number;
+  status: 'pending' | 'approved' | 'completed' | 'cancelled';
+  createdAt: number;
+}
+
 export interface GlobalConfig {
-  targetMarginPercentage: number; // Margen de ganancia objetivo (ej: 40%)
+  companyId: string;
+  targetMarginPercentage: number;
 }
 
 export interface FixedCost {
   id: string;
+  companyId: string;
   name: string;
   amount: number;
   type: 'rent' | 'salary' | 'utilities' | 'marketing' | 'maintenance' | 'insurance' | 'other';
@@ -70,44 +135,65 @@ export interface FixedCost {
 interface FoodCostingState {
   ingredients: Ingredient[];
   dishes: Dish[];
-  globalConfig: GlobalConfig;
+  globalConfig: GlobalConfig | null;
   fixedCosts: FixedCost[];
   events: MenuEvent[];
+  companyProfile: CompanyProfile | null;
   activeEventId: string | null;
+  isLoading: boolean;
+  error: string | null;
   
-  // Acciones - Ingredientes
-  addIngredient: (ingredient: Omit<Ingredient, 'id' | 'realCostPerGram'>) => void;
-  updateIngredient: (id: string, ingredient: Partial<Ingredient>) => void;
-  deleteIngredient: (id: string) => void;
+  // Acciones - Perfil de Empresa
+  fetchCompanyProfile: (companyId: string) => Promise<CompanyProfile | null>;
+  updateCompanyProfile: (profile: Partial<CompanyProfile>) => Promise<void>;
 
-  // Acciones - Platos
-  addDish: (dish: Omit<Dish, 'id' | 'totalCost'>) => void;
-  updateDish: (id: string, dish: Partial<Dish>) => void;
-  deleteDish: (id: string) => void;
+  // Acciones - Órdenes (Checkout)
+  saveOrder: (order: Omit<Order, 'id' | 'createdAt'>) => Promise<string>;
+  // Acciones - Ingredientes (Firestore)
+  fetchIngredients: () => Promise<void>;
+  saveIngredient: (ingredient: Omit<Ingredient, 'companyId' | 'realCostPerGram' | 'id'> & { id?: string }) => Promise<void>;
+  deleteIngredientFirestore: (id: string) => Promise<void>;
 
-  // Acciones - Costos Fijos
-  addFixedCost: (cost: Omit<FixedCost, 'id'>) => void;
-  updateFixedCost: (id: string, cost: Partial<FixedCost>) => void;
-  deleteFixedCost: (id: string) => void;
+  // Acciones - Platos (Firestore)
+  fetchDishes: () => Promise<void>;
+  saveDish: (dish: Omit<Dish, 'companyId' | 'totalCost' | 'id'> & { id?: string }) => Promise<void>;
+  deleteDishFirestore: (id: string) => Promise<void>;
 
-  // Acciones - Eventos
-  addEvent: (event: Omit<MenuEvent, 'id' | 'createdAt'>) => void;
+  // Acciones Principal de Eventos (Firestore Multi-Tenant)
+  fetchEvents: () => Promise<void>;
+  saveEvent: (event: Omit<MenuEvent, 'companyId'> & { companyId?: string }) => Promise<void>;
+  deleteEventFirestore: (id: string) => Promise<void>;
+
+  // Orquestador SaaS
+  fetchCompanyData: () => Promise<void>;
+
+  // Acciones Local UI
+  setActiveEvent: (id: string | null) => void;
+  // ... rest of local actions
+  addEvent: (event: Omit<MenuEvent, 'id' | 'createdAt' | 'dailyMenus' | 'companyId'>) => void;
   updateEvent: (id: string, event: Partial<MenuEvent>) => void;
   deleteEvent: (id: string) => void;
-  setActiveEvent: (id: string | null) => void;
-  addEventItem: (eventId: string, dishId: string) => void;
-  updateEventItem: (eventId: string, dishId: string, percentage: number) => void;
-  removeEventItem: (eventId: string, dishId: string) => void;
+  
+  // Acciones - Gestor de Calendario
+  generateDailyMenus: (eventId: string, startDate: string, endDate: string) => void;
+  addEventItem: (eventId: string, dailyMenuId: string, dishId: string) => void;
+  updateEventItem: (eventId: string, dailyMenuId: string, dishId: string, percentage: number) => void;
+  removeEventItem: (eventId: string, dailyMenuId: string, dishId: string) => void;
 
-  // Acciones - Configuración Global
+  // Acciones - Órdenes (Gestión de Dueño)
+  orders: Order[];
+  fetchOrders: () => Promise<void>;
+  updateOrderStatus: (orderId: string, newStatus: 'pending' | 'approved' | 'completed' | 'cancelled') => Promise<void>;
+
   updateGlobalConfig: (config: Partial<GlobalConfig>) => void;
-}
 
-// --- Helpers ---
+  // Acciones - Gastos Fijos (Keep local for now or migrate if asked)
+  addFixedCost: (fixedCost: Omit<FixedCost, 'id' | 'companyId'>) => void;
+  deleteFixedCost: (id: string) => void;
+}
 
 const calculateRealCostPerGram = (grossWeight: number, netWeight: number, purchasePrice: number) => {
   if (netWeight === 0) return 0;
-  // Costo por gramo utilizable = (Precio de compra / Peso neto en gramos)
   return purchasePrice / netWeight;
 };
 
@@ -116,247 +202,461 @@ const calculateDishTotalCost = (
   factorQ: FactorQConfig, 
   allIngredients: Ingredient[]
 ) => {
-  // 1. Sumar costo de ingredientes
   const ingredientsCost = recipeIngredients.reduce((total, recipeItem) => {
     const ingredient = allIngredients.find(i => i.id === recipeItem.ingredientId);
     if (!ingredient) return total;
     return total + (ingredient.realCostPerGram * recipeItem.gramsUsed);
   }, 0);
 
-  // 2. Aplicar Factor Q (Monto fijo + Porcentaje sobre costo de ingredientes)
   const factorQCost = factorQ.fixedAmount + (ingredientsCost * (factorQ.percentage / 100));
-
-  // 3. Costo Total del Plato
   return ingredientsCost + factorQCost;
 };
 
 
-// --- Store de Zustand con Persistencia ---
+export const useStore = create<FoodCostingState>()((set, get) => ({
+  ingredients: [],
+  dishes: [],
+  fixedCosts: [],
+  events: [],
+  activeEventId: null,
+  isLoading: false,
+  error: null,
+  globalConfig: null,
+  companyProfile: null,
+  orders: [],
 
-export const useStore = create<FoodCostingState>()(
-  persist(
-    (set, get) => ({
-      ingredients: [],
-      dishes: [],
-      fixedCosts: [],
-      events: [],
-      activeEventId: null,
-      globalConfig: {
-        targetMarginPercentage: 35, // Margen predeterminado
-      },
+  // --- IMPLEMENTACIÓN FIRESTORE MULTI-TENANT ---
 
-      // --- Implementación de Acciones ---
+  fetchCompanyProfile: async (companyId) => {
+    try {
+      const docRef = doc(db, 'companies', companyId);
+      const docSnap = await getDocs(query(collection(db, 'companies'), where('companyId', '==', companyId)));
+      if (!docSnap.empty) {
+        const profile = { ...docSnap.docs[0].data(), id: docSnap.docs[0].id } as any;
+        set({ companyProfile: profile as CompanyProfile });
+        return profile as CompanyProfile;
+      }
+      return null;
+    } catch (err: any) {
+      console.error("Error fetching company profile:", err);
+      return null;
+    }
+  },
 
-      addIngredient: (ingredientData) => {
-        set((state) => {
-          const newId = crypto.randomUUID();
-          const realCost = calculateRealCostPerGram(
-            ingredientData.grossWeight, 
-            ingredientData.netWeight, 
-            ingredientData.purchasePrice
-          );
-          
-          return {
-            ingredients: [
-              ...state.ingredients,
-              { ...ingredientData, id: newId, realCostPerGram: realCost }
-            ]
-          };
-        });
-        // TODO: Al añadir/actualizar un ingrediente, se deben recalcular los costos de los platos afectados.
-      },
+  updateCompanyProfile: async (profileUpdate) => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
 
-      updateIngredient: (id, updateData) => {
-        set((state) => {
-          const updatedIngredients = state.ingredients.map(ing => {
-            if (ing.id !== id) return ing;
-            
-            const newData = { ...ing, ...updateData };
-            newData.realCostPerGram = calculateRealCostPerGram(
-              newData.grossWeight, newData.netWeight, newData.purchasePrice
-            );
-            return newData;
-          });
-
-          // Recalcular costos de platos si cambia el precio de un ingrediente
-          const updatedDishes = state.dishes.map(dish => ({
-            ...dish,
-            totalCost: calculateDishTotalCost(dish.ingredients, dish.factorQ, updatedIngredients)
-          }));
-
-          return { ingredients: updatedIngredients, dishes: updatedDishes };
-        });
-      },
-
-      deleteIngredient: (id) => {
-        set((state) => ({
-          ingredients: state.ingredients.filter(ing => ing.id !== id)
-        }));
-      },
-
-      addDish: (dishData) => {
-        set((state) => {
-          const newId = crypto.randomUUID();
-          const totalCost = calculateDishTotalCost(dishData.ingredients, dishData.factorQ, state.ingredients);
-          
-          return {
-            dishes: [
-              ...state.dishes,
-              { ...dishData, id: newId, totalCost }
-            ]
-          };
-        });
-      },
-
-      updateDish: (id, updateData) => {
-        set((state) => {
-          const updatedDishes = state.dishes.map(dish => {
-            if (dish.id !== id) return dish;
-            const newData = { ...dish, ...updateData };
-            // always recalculate total cost in case ingredients or factorQ changed
-            newData.totalCost = calculateDishTotalCost(newData.ingredients, newData.factorQ, state.ingredients);
-            return newData;
-          });
-          return { dishes: updatedDishes };
-        });
-      },
-
-      deleteDish: (id) => {
-        set((state) => ({
-          dishes: state.dishes.filter(dish => dish.id !== id)
-        }));
-      },
-
-      addFixedCost: (costData) => {
-        set((state) => {
-          const newId = crypto.randomUUID();
-          return {
-            fixedCosts: [
-              ...state.fixedCosts,
-              { ...costData, id: newId }
-            ]
-          };
-        });
-      },
-
-      updateFixedCost: (id, updateData) => {
-        set((state) => ({
-          fixedCosts: state.fixedCosts.map(cost => 
-            cost.id === id ? { ...cost, ...updateData } : cost
-          )
-        }));
-      },
-
-      deleteFixedCost: (id) => {
-        set((state) => ({
-          fixedCosts: state.fixedCosts.filter(cost => cost.id !== id)
-        }));
-      },
-
-      // --- Acciones de Eventos ---
-      addEvent: (eventData) => {
-        set((state) => {
-          const newId = crypto.randomUUID();
-          const newEvent: MenuEvent = {
-            ...eventData,
-            id: newId,
-            createdAt: Date.now(),
-            useGlobalFixedCosts: eventData.useGlobalFixedCosts ?? true,
-            customCosts: eventData.customCosts ?? [],
-            guestCount: eventData.guestCount ?? 0,
-          };
-          
-          return {
-            events: [...state.events, newEvent],
-            // Si es el primer evento o está marcado como activo, lo seteamos
-            activeEventId: eventData.isActive ? newId : state.activeEventId
-          };
-        });
-      },
-
-      updateEvent: (id, updateData) => {
-        set((state) => {
-          // Si este evento se marca como activo, desmarcamos los demás
-          let newEvents = state.events.map(ev => 
-             ev.id === id ? { ...ev, ...updateData } : ev
-          );
-          
-          if (updateData.isActive === true) {
-             newEvents = newEvents.map(ev => ({ ...ev, isActive: ev.id === id }));
-          }
-
-          return {
-            events: newEvents,
-            activeEventId: updateData.isActive ? id : (updateData.isActive === false && state.activeEventId === id ? null : state.activeEventId)
-          };
-        });
-      },
-
-      deleteEvent: (id) => {
-        set((state) => ({
-          events: state.events.filter(ev => ev.id !== id),
-          activeEventId: state.activeEventId === id ? null : state.activeEventId
-        }));
-      },
-
-      setActiveEvent: (id) => {
-        set((state) => ({
-          activeEventId: id,
-          events: state.events.map(ev => ({ ...ev, isActive: ev.id === id }))
-        }));
-      },
-
-      addEventItem: (eventId, dishId) => {
-        set((state) => {
-          return {
-            events: state.events.map(ev => {
-              if (ev.id !== eventId) return ev;
-              // Avoid duplicates
-              if (ev.items.some(item => item.dishId === dishId)) return ev;
-              return {
-                ...ev,
-                items: [...ev.items, { dishId, expectedSalesPercentage: 0 }]
-              };
-            })
-          };
-        });
-      },
-
-      updateEventItem: (eventId, dishId, percentage) => {
-        set((state) => ({
-          events: state.events.map(ev => {
-            if (ev.id !== eventId) return ev;
-            return {
-              ...ev,
-              items: ev.items.map(item => 
-                item.dishId === dishId ? { ...item, expectedSalesPercentage: percentage } : item
-              )
-            };
-          })
-        }));
-      },
-
-      removeEventItem: (eventId, dishId) => {
-        set((state) => ({
-          events: state.events.map(ev => {
-            if (ev.id !== eventId) return ev;
-            return {
-              ...ev,
-              items: ev.items.filter(item => item.dishId !== dishId)
-            };
-          })
-        }));
-      },
-
-      updateGlobalConfig: (configUpdate) => {
-        set((state) => ({
-          globalConfig: { ...state.globalConfig, ...configUpdate }
+    set({ isLoading: true });
+    try {
+      // Buscar el documento de la empresa para esta ID
+      const q = query(collection(db, 'companies'), where('companyId', '==', currentUser.companyId));
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const companyDoc = querySnapshot.docs[0];
+        await updateDoc(doc(db, 'companies', companyDoc.id), profileUpdate);
+        
+        set(state => ({
+          companyProfile: state.companyProfile ? { ...state.companyProfile, ...profileUpdate } : null,
+          isLoading: false
         }));
       }
-
-    }),
-    {
-      name: 'food-costing-storage', // Nombre para localStorage
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
     }
-  )
-);
+  },
+
+  saveOrder: async (orderData) => {
+    try {
+      const finalOrder = {
+        ...orderData,
+        createdAt: Date.now()
+      };
+      const docRef = await addDoc(collection(db, 'orders'), finalOrder);
+      return docRef.id;
+    } catch (err: any) {
+      console.error("Error saving order:", err);
+      throw err;
+    }
+  },
+
+  fetchOrders: async () => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
+
+    set({ isLoading: true });
+    try {
+      const q = query(
+        collection(db, 'orders'), 
+        where('companyId', '==', currentUser.companyId),
+        orderBy('createdAt', 'desc')
+      );
+      const querySnapshot = await getDocs(q);
+      const orders = querySnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Order));
+      set({ orders, isLoading: false });
+    } catch (err: any) {
+      console.error("Error fetching orders:", err);
+      set({ error: err.message, isLoading: false });
+    }
+  },
+
+  updateOrderStatus: async (orderId, newStatus) => {
+    set({ isLoading: true });
+    try {
+      const orderRef = doc(db, 'orders', orderId);
+      await updateDoc(orderRef, { status: newStatus });
+      set(state => ({
+        orders: state.orders.map(o => o.id === orderId ? { ...o, status: newStatus } : o),
+        isLoading: false
+      }));
+    } catch (err: any) {
+      console.error("Error updating order status:", err);
+      set({ error: err.message, isLoading: false });
+    }
+  },
+
+  fetchCompanyData: async () => {
+    const { fetchEvents, fetchIngredients, fetchDishes, fetchOrders } = get();
+    set({ isLoading: true, error: null });
+    try {
+      await Promise.all([
+        fetchEvents(),
+        fetchIngredients(),
+        fetchDishes(),
+        fetchOrders()
+      ]);
+      set({ isLoading: false });
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+    }
+  },
+
+  fetchIngredients: async () => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
+
+    try {
+      const q = query(
+        collection(db, 'ingredients'), 
+        where('companyId', '==', currentUser.companyId)
+      );
+      const querySnapshot = await getDocs(q);
+      const ingredients = querySnapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      })) as Ingredient[];
+      set({ ingredients });
+    } catch (err: any) {
+      set({ error: err.message });
+    }
+  },
+
+  saveIngredient: async (ingredientData) => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) throw new Error("No hay usuario autenticado.");
+
+    set({ isLoading: true, error: null });
+    try {
+      const realCost = calculateRealCostPerGram(
+        ingredientData.grossWeight, 
+        ingredientData.netWeight, 
+        ingredientData.purchasePrice
+      );
+      
+      const finalIngredient: Ingredient = {
+        ...ingredientData,
+        id: ingredientData.id || crypto.randomUUID(),
+        companyId: currentUser.companyId,
+        realCostPerGram: realCost
+      };
+      
+      await setDoc(doc(db, 'ingredients', finalIngredient.id), finalIngredient);
+      
+      // Update Local State
+      const current = get().ingredients;
+      const index = current.findIndex(i => i.id === finalIngredient.id);
+      if (index > -1) {
+        set({ ingredients: current.map(i => i.id === finalIngredient.id ? finalIngredient : i) });
+      } else {
+        set({ ingredients: [...current, finalIngredient] });
+      }
+      set({ isLoading: false });
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+      throw err;
+    }
+  },
+
+  deleteIngredientFirestore: async (id: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      await deleteDoc(doc(db, 'ingredients', id));
+      set(state => ({
+        ingredients: state.ingredients.filter(ing => ing.id !== id),
+        isLoading: false
+      }));
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+    }
+  },
+
+  fetchDishes: async () => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
+
+    try {
+      const q = query(
+        collection(db, 'dishes'), 
+        where('companyId', '==', currentUser.companyId)
+      );
+      const querySnapshot = await getDocs(q);
+      const dishes = querySnapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      })) as Dish[];
+      set({ dishes });
+    } catch (err: any) {
+      set({ error: err.message });
+    }
+  },
+
+  saveDish: async (dishData) => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) throw new Error("No hay usuario autenticado.");
+
+    set({ isLoading: true, error: null });
+    try {
+      const totalCost = calculateDishTotalCost(dishData.ingredients, dishData.factorQ, get().ingredients);
+      
+      const finalDish: Dish = {
+        ...dishData,
+        id: dishData.id || crypto.randomUUID(),
+        companyId: currentUser.companyId,
+        totalCost: totalCost
+      };
+      
+      await setDoc(doc(db, 'dishes', finalDish.id), finalDish);
+      
+      // Update Local State
+      const current = get().dishes;
+      const index = current.findIndex(d => d.id === finalDish.id);
+      if (index > -1) {
+        set({ dishes: current.map(d => d.id === finalDish.id ? finalDish : d) });
+      } else {
+        set({ dishes: [...current, finalDish] });
+      }
+      set({ isLoading: false });
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+      throw err;
+    }
+  },
+
+  deleteDishFirestore: async (id: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      await deleteDoc(doc(db, 'dishes', id));
+      set(state => ({
+        dishes: state.dishes.filter(d => d.id !== id),
+        isLoading: false
+      }));
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+    }
+  },
+
+  fetchEvents: async () => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) return;
+
+    set({ isLoading: true, error: null });
+    try {
+      const q = query(
+        collection(db, 'menuEvents'), 
+        where('companyId', '==', currentUser.companyId),
+        orderBy('createdAt', 'desc')
+      );
+      const querySnapshot = await getDocs(q);
+      const events = querySnapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id
+      })) as MenuEvent[];
+      set({ events, isLoading: false });
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+    }
+  },
+
+  saveEvent: async (eventData) => {
+    const currentUser = useAuthStore.getState().user;
+    if (!currentUser) throw new Error("No hay usuario autenticado.");
+
+    set({ isLoading: true, error: null });
+    try {
+      const finalEvent: MenuEvent = {
+        ...eventData,
+        companyId: currentUser.companyId,
+        id: eventData.id || crypto.randomUUID(),
+        createdAt: eventData.createdAt || Date.now()
+      } as MenuEvent;
+      
+      await setDoc(doc(db, 'menuEvents', finalEvent.id), finalEvent);
+      
+      const currentEvents = get().events;
+      const index = currentEvents.findIndex(e => e.id === finalEvent.id);
+      if (index > -1) {
+        set({ events: currentEvents.map(e => e.id === finalEvent.id ? finalEvent : e) });
+      } else {
+        set({ events: [finalEvent, ...currentEvents] });
+      }
+      set({ isLoading: false });
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+      throw err;
+    }
+  },
+
+  deleteEventFirestore: async (id: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      await deleteDoc(doc(db, 'menuEvents', id));
+      set(state => ({
+        events: state.events.filter(e => e.id !== id),
+        activeEventId: state.activeEventId === id ? null : state.activeEventId,
+        isLoading: false
+      }));
+    } catch (err: any) {
+      set({ error: err.message, isLoading: false });
+    }
+  },
+
+  // --- MÉTODOS LOCALES Y BACKUP ---
+
+  setActiveEvent: (id) => {
+    set((state) => ({
+      activeEventId: id,
+      events: state.events.map(ev => ({ ...ev, isActive: ev.id === id }))
+    }));
+  },
+
+  addEvent: (eventData) => {
+    const cid = useAuthStore.getState().user?.companyId || 'anon';
+    set((state) => {
+      const newId = crypto.randomUUID();
+      const newEvent: MenuEvent = {
+        ...eventData,
+        id: newId,
+        companyId: cid,
+        createdAt: Date.now(),
+        useGlobalFixedCosts: eventData.useGlobalFixedCosts ?? true,
+        customCosts: eventData.customCosts ?? [],
+        dailyMenus: []
+      } as MenuEvent;
+      return { events: [...state.events, newEvent] };
+    });
+  },
+
+  updateEvent: (id, updateData) => {
+    set((state) => ({
+      events: state.events.map(ev => ev.id === id ? { ...ev, ...updateData } : ev)
+    }));
+  },
+
+  deleteEvent: (id) => {
+     set(state => ({ events: state.events.filter(e => e.id !== id) }));
+  },
+
+  generateDailyMenus: (eventId, startDate, endDate) => {
+    set((state) => ({
+      events: state.events.map(ev => {
+        if (ev.id !== eventId) return ev;
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        const newDailyMenus: DailyMenu[] = [];
+        if (start <= end) {
+           let currentDate = new Date(start);
+           while (currentDate <= end) {
+             const dateIso = currentDate.toISOString().split('T')[0];
+             newDailyMenus.push({
+               id: crypto.randomUUID(),
+               date: dateIso,
+               dayName: 'Día',
+               items: []
+             });
+             currentDate.setDate(currentDate.getDate() + 1);
+           }
+        }
+        return { ...ev, startDate, endDate, dailyMenus: newDailyMenus };
+      })
+    }));
+  },
+
+  addEventItem: (eventId, dailyMenuId, dishId) => {
+    set((state) => ({
+      events: state.events.map(ev => {
+        if (ev.id !== eventId) return ev;
+        return {
+          ...ev,
+          dailyMenus: ev.dailyMenus.map(day => {
+             if (day.id !== dailyMenuId) return day;
+             return { ...day, items: [...day.items, { id: crypto.randomUUID(), dishId, expectedSalesPercentage: 0 }] };
+          })
+        };
+      })
+    }));
+  },
+
+  updateEventItem: (eventId, dailyMenuId, dishId, percentage) => {
+    set((state) => ({
+      events: state.events.map(ev => {
+        if (ev.id !== eventId) return ev;
+        return {
+          ...ev,
+          dailyMenus: ev.dailyMenus.map(day => {
+            if (day.id !== dailyMenuId) return day;
+            return {
+              ...day,
+              items: day.items.map(item => item.dishId === dishId ? { ...item, expectedSalesPercentage: percentage } : item)
+            };
+          })
+        };
+      })
+    }));
+  },
+
+  removeEventItem: (eventId, dailyMenuId, dishId) => {
+    set((state) => ({
+      events: state.events.map(ev => {
+        if (ev.id !== eventId) return ev;
+        return {
+          ...ev,
+          dailyMenus: ev.dailyMenus.map(day => {
+            if (day.id !== dailyMenuId) return day;
+            return { ...day, items: day.items.filter(item => item.dishId !== dishId) };
+          })
+        };
+      })
+    }));
+  },
+
+  updateGlobalConfig: (configUpdate) => {
+    set((state) => ({
+      globalConfig: state.globalConfig ? { ...state.globalConfig, ...configUpdate } : null
+    }));
+  },
+
+  addFixedCost: (costData) => {
+    const cid = useAuthStore.getState().user?.companyId || 'anon';
+    set((state) => ({
+      fixedCosts: [...state.fixedCosts, { ...costData, id: crypto.randomUUID(), companyId: cid }]
+    }));
+  },
+
+  deleteFixedCost: (id: string) => {
+    set((state) => ({
+      fixedCosts: state.fixedCosts.filter(c => c.id !== id)
+    }));
+  }
+
+}));
