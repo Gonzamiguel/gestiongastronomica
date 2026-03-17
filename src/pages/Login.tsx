@@ -10,7 +10,7 @@ export function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as any)?.from?.pathname || "/";
+  const from = (location.state as any)?.from?.pathname || "/app";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

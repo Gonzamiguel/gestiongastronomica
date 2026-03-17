@@ -51,3 +51,15 @@ export function generateWhatsAppLink(order: Order, businessPhone: string, eventN
   const encodedMessage = encodeURIComponent(message);
   return `https://wa.me/${businessPhone}?text=${encodedMessage}`;
 }
+
+/**
+ * Genera un enlace de WhatsApp directo para ventas/consultas del SaaS.
+ * 
+ * @param messageText - El texto base que el cliente enviará.
+ * @returns {string} URL de wa.me.
+ */
+export function generateSalesWhatsAppLink(messageText: string = "¡Hola! Vi la landing y quiero información de ViandasPro"): string {
+  const salesPhone = "5492655153542";
+  const encodedMessage = encodeURIComponent(messageText);
+  return `https://wa.me/${salesPhone}?text=${encodedMessage}`;
+}

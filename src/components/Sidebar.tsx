@@ -20,18 +20,18 @@ export function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (v:
   const navigate = useNavigate();
 
   const superadminLinks = [
-    { name: 'Panel de Clientes', href: '/', icon: Building2 },
+    { name: 'Panel de Clientes', href: '/app', icon: Building2 },
   ];
 
   const companyLinks = [
-    { name: 'Dashboard', href: '/', icon: Home },
-    { name: 'Gestión de Pedidos', href: '/orders', icon: ShoppingBag },
-    { name: 'Ingredientes', href: '/ingredients', icon: Utensils },
-    { name: 'Viandas', href: '/dishes', icon: BookOpen },
-    { name: 'Costos Fijos', href: '/fixed-costs', icon: DollarSign },
-    { name: 'Simulaciones / Eventos', href: '/events', icon: Calendar },
-    { name: 'Ingeniería de Menús', href: '/menu-engineering', icon: PieChart },
-    { name: 'Configuración', href: '/settings', icon: Settings },
+    { name: 'Dashboard', href: '/app', icon: Home },
+    { name: 'Gestión de Pedidos', href: '/app/orders', icon: ShoppingBag },
+    { name: 'Ingredientes', href: '/app/ingredients', icon: Utensils },
+    { name: 'Viandas', href: '/app/dishes', icon: BookOpen },
+    { name: 'Costos Fijos', href: '/app/fixed-costs', icon: DollarSign },
+    { name: 'Simulaciones / Eventos', href: '/app/events', icon: Calendar },
+    { name: 'Ingeniería de Menús', href: '/app/menu-engineering', icon: PieChart },
+    { name: 'Configuración', href: '/app/settings', icon: Settings },
   ];
 
   const navigation = user?.role === 'superadmin' ? superadminLinks : companyLinks;

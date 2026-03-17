@@ -6,6 +6,7 @@ import { Dashboard, Ingredients, Dishes, MenuEngineering, FixedCosts } from './p
 import { EventsList, EventEditor, PublicMenu } from './pages/Events';
 import { Settings } from './pages/Settings';
 import { OrdersManager } from './pages/OrdersManager';
+import { LandingPage } from './pages/LandingPage';
 import { Login } from './pages/Login';
 import { SuperadminDashboard } from './pages/SuperadminDashboard';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -25,23 +26,24 @@ function Root() {
 
   return (
     <Routes>
+      {/* Landing Page - Pública */}
+      <Route path="/" element={<LandingPage />} />
+
       {/* Ruta de Login - Pública */}
       <Route path="/login" element={<Login />} />
 
-      {/* Rutas Privadas Protegidas */}
-      <Route path="/" element={
+      {/* Rutas Privadas / Aplicación */}
+      <Route path="/app" element={
         <ProtectedRoute>
           <MainLayout />
         </ProtectedRoute>
       }>
-        {/* ENRUTAMIENTO POR ROL EN LA RAÍZ */}
         <Route index element={
           user?.role === 'superadmin' 
             ? <SuperadminDashboard /> 
             : <Dashboard />
         } />
         
-        {/* Rutas exclusivas de Empresa (vistas operativas) */}
         <Route path="ingredients" element={<Ingredients />} />
         <Route path="dishes" element={<Dishes />} />
         <Route path="fixed-costs" element={<FixedCosts />} />
