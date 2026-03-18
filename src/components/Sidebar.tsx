@@ -19,19 +19,20 @@ export function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (v:
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
 
+  // CORRECCIÓN: Rutas directas sin /app
   const superadminLinks = [
-    { name: 'Panel de Clientes', href: '/app', icon: Building2 },
+    { name: 'Panel de Clientes', href: '/dashboard', icon: Building2 },
   ];
 
   const companyLinks = [
-    { name: 'Dashboard', href: '/app', icon: Home },
-    { name: 'Gestión de Pedidos', href: '/app/orders', icon: ShoppingBag },
-    { name: 'Ingredientes', href: '/app/ingredients', icon: Utensils },
-    { name: 'Viandas', href: '/app/dishes', icon: BookOpen },
-    { name: 'Costos Fijos', href: '/app/fixed-costs', icon: DollarSign },
-    { name: 'Simulaciones / Eventos', href: '/app/events', icon: Calendar },
-    { name: 'Ingeniería de Menús', href: '/app/menu-engineering', icon: PieChart },
-    { name: 'Configuración', href: '/app/settings', icon: Settings },
+    { name: 'Dashboard', href: '/dashboard', icon: Home },
+    { name: 'Gestión de Pedidos', href: '/orders', icon: ShoppingBag },
+    { name: 'Ingredientes', href: '/ingredients', icon: Utensils },
+    { name: 'Viandas', href: '/dishes', icon: BookOpen },
+    { name: 'Costos Fijos', href: '/fixed-costs', icon: DollarSign },
+    { name: 'Simulaciones / Eventos', href: '/events', icon: Calendar },
+    { name: 'Ingeniería de Menús', href: '/menu-engineering', icon: PieChart },
+    { name: 'Configuración', href: '/settings', icon: Settings },
   ];
 
   const navigation = user?.role === 'superadmin' ? superadminLinks : companyLinks;
@@ -45,26 +46,24 @@ export function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (v:
     <>
       {/* Mobile overlay */}
       <div
-        className={`fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-40 lg:hidden ${
-          isOpen ? 'block' : 'hidden'
-        } transition-opacity duration-300`}
+        className={`fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-40 lg:hidden ${isOpen ? 'block' : 'hidden'
+          } transition-opacity duration-300`}
         onClick={() => setIsOpen(false)}
       />
 
       {/* Sidebar container */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 flex flex-col transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        } shadow-2xl lg:shadow-none border-r border-slate-800`}
+        className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 flex flex-col transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'
+          } shadow-2xl lg:shadow-none border-r border-slate-800`}
       >
         <div className="flex h-16 shrink-0 items-center justify-between px-6 bg-slate-950/50 border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className={`p-1.5 rounded-lg ${user?.role === 'superadmin' ? 'bg-indigo-600' : 'bg-blue-600'}`}>
-               {user?.role === 'superadmin' ? (
-                 <ShieldCheck className="h-6 w-6 text-white" />
-               ) : (
-                 <Utensils className="h-6 w-6 text-white" />
-               )}
+              {user?.role === 'superadmin' ? (
+                <ShieldCheck className="h-6 w-6 text-white" />
+              ) : (
+                <Utensils className="h-6 w-6 text-white" />
+              )}
             </div>
             <span className="text-xl font-bold tracking-tight text-white">FoodCost Pro</span>
           </div>
@@ -72,7 +71,7 @@ export function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (v:
             <Menu className="h-6 w-6" />
           </button>
         </div>
-        
+
         <nav className="flex flex-1 flex-col p-4 overflow-y-auto mt-2">
           <p className="px-3 text-[10px] font-black text-slate-500 uppercase tracking-[2px] mb-4">
             {user?.role === 'superadmin' ? 'Administración SaaS' : 'Gestión Gastronómica'}
@@ -84,21 +83,19 @@ export function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (v:
                   to={item.href}
                   onClick={() => setIsOpen(false)}
                   className={({ isActive }) =>
-                    `group flex items-center gap-x-3 rounded-xl px-3 py-2.5 text-sm font-bold transition-all duration-200 ${
-                      isActive
-                        ? (user?.role === 'superadmin' 
-                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20' 
-                            : 'bg-blue-600 text-white shadow-md shadow-blue-900/20')
-                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    `group flex items-center gap-x-3 rounded-xl px-3 py-2.5 text-sm font-bold transition-all duration-200 ${isActive
+                      ? (user?.role === 'superadmin'
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-900/20'
+                        : 'bg-blue-600 text-white shadow-md shadow-blue-900/20')
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
                     }`
                   }
                 >
                   {({ isActive }) => (
                     <>
                       <item.icon
-                        className={`h-5 w-5 shrink-0 transition-colors duration-200 ${
-                          isActive ? 'text-white' : 'text-slate-500 group-hover:text-white'
-                        }`}
+                        className={`h-5 w-5 shrink-0 transition-colors duration-200 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-white'
+                          }`}
                         aria-hidden="true"
                       />
                       {item.name}
@@ -117,7 +114,7 @@ export function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (v:
                 {user?.role === 'superadmin' ? 'Super Usuario' : 'Admin de Empresa'}
               </p>
             </div>
-            
+
             <button
               onClick={handleLogout}
               className="w-full group flex items-center gap-x-3 rounded-xl px-3 py-2.5 text-sm font-bold text-red-400 hover:text-white hover:bg-red-500/10 transition-all duration-200"
