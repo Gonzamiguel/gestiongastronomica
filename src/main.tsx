@@ -26,39 +26,46 @@ function Root() {
 
   return (
     <Routes>
-      {/* Landing Page - Pública */}
+      {/* 1. SECCIÓN PÚBLICA: Landing Page */}
       <Route path="/" element={<LandingPage />} />
 
-      {/* Ruta de Login - Pública */}
-      <Route path="/login" element={<Login />} />
+      {/* 2. LOGIN: Si ya está logueado, lo mandamos al dashboard automáticamente */}
+      <Route path="/login" element={
+        user ? <Navigate to="/dashboard" replace /> : <Login />
+      } />
 
-      {/* Rutas Privadas / Aplicación */}
-      <Route path="/app" element={
+      {/* 3. SECCIÓN PRIVADA: Todo dentro de ProtectedRoute y MainLayout */}
+      {/* Quitamos el path="/app" para que las rutas sean directas (/ingredients, /events, etc) */}
+      <Route element={
         <ProtectedRoute>
           <MainLayout />
         </ProtectedRoute>
       }>
-        <Route index element={
-          user?.role === 'superadmin' 
-            ? <SuperadminDashboard /> 
+        {/* Dashboard Dinámico */}
+        <Route path="/dashboard" element={
+          user?.role === 'superadmin'
+            ? <SuperadminDashboard />
             : <Dashboard />
         } />
-        
-        <Route path="ingredients" element={<Ingredients />} />
-        <Route path="dishes" element={<Dishes />} />
-        <Route path="fixed-costs" element={<FixedCosts />} />
-        <Route path="events" element={<EventsList />} />
-        <Route path="events/:id" element={<EventEditor />} />
-        <Route path="menu-engineering" element={<MenuEngineering />} />
-        <Route path="orders" element={<OrdersManager />} />
-        <Route path="settings" element={<Settings />} />
+
+        {/* Rutas de Gestión */}
+        <Route path="/ingredients" element={<Ingredients />} />
+        <Route path="/dishes" element={<Dishes />} />
+        <Route path="/fixed-costs" element={<FixedCosts />} />
+        <Route path="/events" element={<EventsList />} />
+        <Route path="/events/:id" element={<EventEditor />} />
+        <Route path="/menu-engineering" element={<MenuEngineering />} />
+        <Route path="/orders" element={<OrdersManager />} />
+        <Route path="/settings" element={<Settings />} />
       </Route>
 
-      {/* Vista Pública (Checkout) - No requiere login de admin */}
+      {/* 4. MENÚ PÚBLICO: Para los clientes finales (no requiere login) */}
       <Route path="/menu/:id" element={<PublicMenu />} />
 
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/" replace />} />
+      {/* 5. FALLBACK: Si la ruta no existe o algo falla */}
+      <Route path="*" element={
+        <Navigate to={user ? "/dashboard" : "/"} replace />
+      } />
     </Routes>
   );
 }
