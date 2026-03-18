@@ -695,12 +695,28 @@ export function PublicMenu() {
           setEvent(eventData);
           if (eventData.dailyMenus.length > 0) setActiveTabId(eventData.dailyMenus[0].id);
 
-          // 2. Fetch Company Profile using companyId from event
-          const companyQuery = query(collection(db, 'companies'), where('companyId', '==', eventData.companyId));
-          const companySnap = await getDocs(companyQuery);
-          if (!companySnap.empty) {
-            const profileData = { ...companySnap.docs[0].data(), id: companySnap.docs[0].id } as any;
-            setProfile(profileData as CompanyProfile);
+          // 2. Fetch Company Profile
+          // CORRECCIÓN: Intentamos obtener el documento de la empresa directo por su ID para evitar errores de índices.
+          if (eventData.companyId) {
+            try {
+              const companyRef = doc(db, 'companies', eventData.companyId);
+              const companySnap = await getDoc(companyRef);
+
+              if (companySnap.exists()) {
+                const profileData = { ...companySnap.data(), id: companySnap.id } as any;
+                setProfile(profileData as CompanyProfile);
+              } else {
+                // Fallback por si la estructura de IDs no coincide
+                const companyQuery = query(collection(db, 'companies'), where('companyId', '==', eventData.companyId));
+                const querySnap = await getDocs(companyQuery);
+                if (!querySnap.empty) {
+                  const profileData = { ...querySnap.docs[0].data(), id: querySnap.docs[0].id } as any;
+                  setProfile(profileData as CompanyProfile);
+                }
+              }
+            } catch (err) {
+              console.error("Error buscando empresa:", err);
+            }
           }
         }
       } catch (err) {
@@ -757,7 +773,6 @@ export function PublicMenu() {
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // TRUCO PARA TYPESCRIPT: Lo tratamos como 'any' para evitar líneas rojas
     const p = profile as any;
 
     if (!p || (!p.whatsapp && !p.whatsappNumber)) {
@@ -765,7 +780,6 @@ export function PublicMenu() {
       return;
     }
 
-    // El número final que usaremos (prioriza el nuevo campo 'whatsapp')
     const finalPhone = p.whatsapp || p.whatsappNumber;
 
     const orderItems: OrderItem[] = [];
@@ -803,10 +817,8 @@ export function PublicMenu() {
 
     try {
       setLoading(true);
-      // 1. Guardamos el pedido en Firestore
       const orderId = await saveOrder(orderObj);
 
-      // 2. Abrimos WhatsApp con el número corregido
       const waLink = generateWhatsAppLink(
         { ...orderObj, id: orderId, createdAt: Date.now() } as Order,
         finalPhone,
