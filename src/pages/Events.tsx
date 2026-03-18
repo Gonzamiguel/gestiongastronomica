@@ -299,8 +299,8 @@ export function EventEditor() {
             disabled={isLoading}
             onClick={handleSaveToCloud}
             className={`inline-flex items-center gap-2 px-6 py-3 rounded-xl font-bold shadow-lg transition-all ${saveStatus === 'success'
-                ? 'bg-emerald-500 text-white'
-                : 'bg-indigo-600 text-white hover:bg-indigo-500 hover:scale-105 active:scale-95'
+              ? 'bg-emerald-500 text-white'
+              : 'bg-indigo-600 text-white hover:bg-indigo-500 hover:scale-105 active:scale-95'
               }`}
           >
             {isLoading ? (
@@ -429,8 +429,8 @@ export function EventEditor() {
                     key={day.id}
                     onClick={() => setActiveTabId(day.id)}
                     className={`min-w-[120px] px-6 py-4 text-sm font-bold border-b-2 whitespace-nowrap transition-colors ${activeTabId === day.id
-                        ? 'border-indigo-600 text-indigo-600 bg-white'
-                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+                      ? 'border-indigo-600 text-indigo-600 bg-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100'
                       }`}
                   >
                     <div className="text-xs font-medium uppercase tracking-wider mb-1">{day.dayName}</div>
@@ -897,8 +897,8 @@ export function PublicMenu() {
                   key={day.id}
                   onClick={() => setActiveTabId(day.id)}
                   className={`flex-1 min-w-[100px] px-4 py-5 text-center transition-all duration-300 ${activeTabId === day.id
-                      ? 'bg-white shadow-inner'
-                      : 'hover:bg-white/50'
+                    ? 'bg-white shadow-inner'
+                    : 'hover:bg-white/50'
                     }`}
                 >
                   <div className={`text-[9px] font-black uppercase tracking-widest mb-1 transition-colors ${activeTabId === day.id ? 'text-indigo-600' : 'text-slate-400'}`}>

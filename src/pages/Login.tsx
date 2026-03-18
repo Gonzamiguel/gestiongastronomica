@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/useAuthStore';
 import { LogIn, Loader2, AlertCircle } from 'lucide-react';
@@ -6,25 +6,33 @@ import { LogIn, Loader2, AlertCircle } from 'lucide-react';
 export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { login, loginWithGoogle, isLoading, error } = useAuthStore();
+  // 1. MEJORA: Obtenemos también el estado "user" para el inicio automático
+  const { login, loginWithGoogle, isLoading, error, user } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as any)?.from?.pathname || "/app";
+  const from = (location.state as any)?.from?.pathname || "/dashboard";
+
+  // 2. MEJORA: Escuchador para redirigir apenas detecte al usuario
+  useEffect(() => {
+    if (user && !isLoading) {
+      navigate(from, { replace: true });
+    }
+  }, [user, isLoading, navigate, from]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await login(email, password);
-      navigate(from, { replace: true });
-    } catch (err) {}
+      // Ya no hace falta el navigate acá, el useEffect de arriba se encarga.
+    } catch (err) { }
   };
 
   const handleGoogleLogin = async () => {
     try {
       await loginWithGoogle();
-      navigate(from, { replace: true });
-    } catch (err) {}
+      // Ya no hace falta el navigate acá, el useEffect de arriba se encarga.
+    } catch (err) { }
   };
 
   return (
@@ -32,7 +40,7 @@ export function Login() {
       <div className="max-w-md w-full space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-slate-100">
         <div className="text-center">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-600 text-white mb-6 shadow-lg">
-             <LogIn className="w-8 h-8" />
+            <LogIn className="w-8 h-8" />
           </div>
           <h2 className="text-3xl font-black text-slate-900 tracking-tight">Food Costing SaaS</h2>
           <p className="mt-2 text-sm text-slate-500 font-medium">Inicia sesión en tu panel de empresa</p>
@@ -107,7 +115,7 @@ export function Login() {
               )}
             </button>
           </form>
-          
+
           <div className="text-center">
             <p className="text-xs text-slate-400">
               ¿No tienes acceso? <span className="text-indigo-600 font-bold cursor-help underline decoration-indigo-200 underline-offset-4">Solicita el alta a tu administrador</span>
